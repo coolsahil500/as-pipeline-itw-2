@@ -35,7 +35,7 @@ jobs:
     - name: tfsec - Scan Terraform for security issues
       uses: aquasecurity/tfsec-action@v1.0.0
       with:
-        working_directory: ./terraform # adjust this path if your TF files are elsewhere
+        working_directory: . # adjust this path if your TF files are elsewhere
 
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v1
