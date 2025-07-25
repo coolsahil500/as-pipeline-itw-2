@@ -1,4 +1,4 @@
-name: CI/CD Pipeline to EKS
+name: DevSecOps CI/CD to EKS
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build-and-deploy:
+  build-scan-deploy:
     runs-on: ubuntu-latest
 
     env:
@@ -32,13 +32,25 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
         audience: sts.amazonaws.com
 
+    - name: tfsec - Scan Terraform for security issues
+      uses: aquasecurity/tfsec-action@v1.0.0
+      with:
+        working_directory: ./terraform # adjust this path if your TF files are elsewhere
+
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v1
 
     - name: Build and tag Docker image
       run: |
         docker build -t $REPOSITORY_URI:$IMAGE_TAG .
-    
+
+    - name: Trivy - Scan Docker image for vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+        format: table
+        exit-code: 0 # set to 1 to fail on criticals
+
     - name: Push Docker image to Amazon ECR
       run: |
         docker push $REPOSITORY_URI:$IMAGE_TAG
@@ -47,6 +59,10 @@ jobs:
       run: |
         aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
 
-    - name: Deploy to EKS
+    - name: Apply SealedSecrets
+      run: |
+        kubectl apply -f sealed-secrets/
+
+    - name: Deploy Kubernetes Manifests
       run: |
         kubectl apply -f k8s/
