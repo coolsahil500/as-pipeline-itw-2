@@ -35,7 +35,7 @@ jobs:
     - name: tfsec - Scan Terraform for security issues
       uses: aquasecurity/tfsec-action@v1.0.0
       with:
-        working_directory: . # adjust this path if your TF files are elsewhere
+        working_directory: .
 
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v1
@@ -49,7 +49,7 @@ jobs:
       with:
         image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
         format: table
-        exit-code: 0 # set to 1 to fail on criticals
+        exit-code: 0
 
     - name: Push Docker image to Amazon ECR
       run: |
@@ -59,10 +59,41 @@ jobs:
       run: |
         aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
 
-    - name: Apply SealedSecrets
+    - name: Install Sealed Secrets Controller
+      run: |
+        kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
+
+    - name: Install kubeseal CLI
+      run: |
+        wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/kubeseal-0.25.0-linux-amd64.tar.gz
+        tar -xvzf kubeseal-0.25.0-linux-amd64.tar.gz
+        sudo install kubeseal /usr/local/bin/kubeseal
+
+    - name: Create and Seal Kubernetes Secret
+      run: |
+        mkdir -p sealed-secrets
+
+        # Create a temporary secret YAML
+        cat <<EOF > my-secret.yaml
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: my-secret
+          namespace: default
+        type: Opaque
+        data:
+          username: $(echo -n "admin" | base64)
+          password: $(echo -n "mypassword" | base64)
+        EOF
+
+        # Seal the secret
+        kubeseal --controller-namespace kube-system --format=yaml < my-secret.yaml > sealed-secrets/mysealedsecret.yaml
+
+
+    - name: Apply SealedSecret to cluster
       run: |
         kubectl apply -f sealed-secrets/
 
-    - name: Deploy Kubernetes Manifests
+    - name: Deploy Kubernetes manifests
       run: |
         kubectl apply -f k8s/
