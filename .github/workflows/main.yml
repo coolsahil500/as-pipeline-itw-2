@@ -55,10 +55,13 @@ jobs:
       run: |
         docker push $REPOSITORY_URI:$IMAGE_TAG
 
-    - name: Update kubeconfig
+    - name: Update kubeconfig for EKS
       run: |
         aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-        - name: Install Sealed Secrets Controller
+
+    - name: Install Sealed Secrets Controller
+      run: |
+        kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
 
     - name: Install Sealed Secrets Controller
       run: |
