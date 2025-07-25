@@ -60,45 +60,7 @@ jobs:
         aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
         kubectl config use-context arn:aws:eks:$AWS_REGION:$AWS_ACCOUNT_ID:cluster/$CLUSTER_NAME
 
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-    - name: Install kubeseal CLI
-      run: |
-        wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/kubeseal-0.25.0-linux-amd64.tar.gz
-        tar -xvzf kubeseal-0.25.0-linux-amd64.tar.gz
-        sudo install kubeseal /usr/local/bin/kubeseal
-
-    - name: Create and Seal Kubernetes Secret
-      run: |
-        mkdir -p sealed-secrets
-
-        # Create a temporary secret YAML
-        cat <<EOF > my-secret.yaml
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: my-secret
-          namespace: default
-        type: Opaque
-        data:
-          username: $(echo -n "admin" | base64)
-          password: $(echo -n "mypassword" | base64)
-        EOF
-
-        # Seal the secret
-        kubeseal --controller-namespace kube-system --format=yaml < my-secret.yaml > sealed-secrets/mysealedsecret.yaml
-
-
-    - name: Apply SealedSecret to cluster
-      run: |
-        kubectl apply -f sealed-secrets/
+    #
 
     - name: Deploy Kubernetes manifests
       run: |
