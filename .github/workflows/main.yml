@@ -58,6 +58,12 @@ jobs:
     - name: Update kubeconfig for EKS
       run: |
         aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+        kubectl config use-context arn:aws:eks:$AWS_REGION:$AWS_ACCOUNT_ID:cluster/$CLUSTER_NAME
+
+    - name: Install Sealed Secrets Controller
+      run: |
+        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
+
 
     - name: Install Sealed Secrets Controller
       run: |
