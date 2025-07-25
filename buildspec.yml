@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: ap-south-1
+    AWS_ACCOUNT_ID: 339713011246
+    IMAGE_REPO_NAME: nodejs-app-repo
+    REPOSITORY_URI: 339713011246.dkr.ecr.ap-south-1.amazonaws.com/nodejs-app-repo
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
+      - echo Installing dependencies...
+      - npm install
+      - IMAGE_TAG=v1.0-$(date +%s)
+      - echo $IMAGE_TAG > imageTag.txt
+
+  build:
+    commands:
+      - echo Building Docker image with tag $IMAGE_TAG...
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo Pushing Docker image to ECR...
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo Image $REPOSITORY_URI:$IMAGE_TAG pushed successfully.
+      - echo "::set-output name=image_tag::$IMAGE_TAG"
+
+artifacts:
+  files:
+    - imageTag.txt

@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: node-service
+  annotations:
+    kubernetes.io/ingress.class: alb  # ✅ Required!
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: service-group
+    alb.ingress.kubernetes.io/subnets: subnet-023fd3649a4f8f4a4,subnet-094f9a52c76a51ed1,subnet-0fa6d69db0e420935
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: node-service
+            port:
+              number: 80

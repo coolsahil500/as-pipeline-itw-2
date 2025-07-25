@@ -1,1 +1,108 @@
 
+name: CI/CD DevSecOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: 339713011246
+  CLUSTER_NAME: itw-test-project
+  IMAGE_REPO_NAME: nodejs-app-repo
+  REPOSITORY_URI: 339713011246.dkr.ecr.ap-south-1.amazonaws.com/nodejs-app-repo
+
+jobs:
+  build-and-scan:
+    name: Build & Security Scan
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set-tag.outputs.image_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set image tag
+        id: set-tag
+        run: |
+          IMAGE_TAG=v1.0-$(date +%s)
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tfsec (Terraform scan)
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ./infra
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+          docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
+
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: $REPOSITORY_URI:$IMAGE_TAG
+          format: table
+          exit-code: 0
+
+      - name: Push Docker image to ECR
+        run: |
+          docker push $REPOSITORY_URI:$IMAGE_TAG
+          echo "Image pushed: $REPOSITORY_URI:$IMAGE_TAG"
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+
+      - name: Apply SealedSecrets
+        run: |
+          echo "Applying sealed secrets..."
+          kubectl apply -f sealed-secrets/
+
+      - name: Update image in manifest
+        run: |
+          echo "Updating image tag in manifest to: ${{ needs.build-and-scan.outputs.image_tag }}"
+          sed -i "s|image: .*$|image: $REPOSITORY_URI:${{ needs.build-and-scan.outputs.image_tag }}|" k8s/deployment.yaml
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/
+            kubectl rollout status deployment/nodejs-app-deployment 
