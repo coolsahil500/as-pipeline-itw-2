@@ -1,107 +1,72 @@
-name: DevSecOps CI/CD to EKS
+name: DevSecOps CI/CD Pipeline
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  id-token: write
-  contents: read
+  push:
+    branches:
+      - main
 
 jobs:
-  build-scan-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: ap-south-1
-      AWS_ACCOUNT_ID: 339713011246
       CLUSTER_NAME: itw-test-project
-      IMAGE_REPO_NAME: nodejs-app-repo
+      KUBECONFIG: /tmp/kubeconfig
       REPOSITORY_URI: 339713011246.dkr.ecr.ap-south-1.amazonaws.com/nodejs-app-repo
       IMAGE_TAG: latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-    - name: Configure AWS credentials (OIDC)
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
-        aws-region: ${{ env.AWS_REGION }}
-        audience: sts.amazonaws.com
+      # ----------- AWS Authentication via GitHub OIDC -----------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: tfsec - Scan Terraform for security issues
-      uses: aquasecurity/tfsec-action@v1.0.0
-      with:
-        working_directory: .
+      # ----------- Terraform Security Scan using tfsec -----------
+      - name: tfsec - scan Terraform code
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
 
-    - name: Login to Amazon ECR
-      uses: aws-actions/amazon-ecr-login@v1
+      # ----------- Docker Image Security Scan using Trivy -----------
+      - name: Install Trivy
+        run: |
+          sudo apt-get update && sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
 
-    - name: Build and tag Docker image
-      run: |
-        docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - name: Run Trivy vulnerability scanner on Docker image
+        run: |
+          trivy image --exit-code 0 --severity CRITICAL,HIGH $REPOSITORY_URI:$IMAGE_TAG
 
-    - name: Trivy - Scan Docker image for vulnerabilities
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
-        format: table
-        exit-code: 0
+      # ----------- Configure kubeconfig for EKS -----------
+      - name: Set up kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $CLUSTER_NAME \
+            --kubeconfig $KUBECONFIG
 
-    - name: Push Docker image to Amazon ECR
-      run: |
-        docker push $REPOSITORY_URI:$IMAGE_TAG
+      # ----------- Deploy Sealed Secrets Controller -----------
+      - name: Deploy Sealed Secrets controller
+        run: |
+          kubectl --kubeconfig=$KUBECONFIG apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
 
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-        
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
+      # ----------- Apply Sealed Secrets (if manifest exists) -----------
+      - name: Apply Sealed Secrets
+        run: |
+          kubectl --kubeconfig=$KUBECONFIG apply -f sealed-secrets/
+        if: ${{ exists('sealed-secrets/') }}
 
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-    - name: Install kubeseal CLI
-      run: |
-        wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/kubeseal-0.25.0-linux-amd64.tar.gz
-        tar -xvzf kubeseal-0.25.0-linux-amd64.tar.gz
-        sudo install kubeseal /usr/local/bin/kubeseal
-
-    - name: Create and Seal Kubernetes Secret
-      run: |
-        mkdir -p sealed-secrets
-
-        # Create a temporary secret YAML
-        cat <<EOF > my-secret.yaml
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: my-secret
-          namespace: default
-        type: Opaque
-        data:
-          username: $(echo -n "admin" | base64)
-          password: $(echo -n "mypassword" | base64)
-        EOF
-
-        # Seal the secret
-        kubeseal --controller-namespace kube-system --format=yaml < my-secret.yaml > sealed-secrets/mysealedsecret.yaml
-
-
-    - name: Apply SealedSecret to cluster
-      run: |
-        kubectl apply -f sealed-secrets/
-
-    - name: Deploy Kubernetes manifests
-      run: |
-        kubectl apply -f k8s/
+      # ----------- Deploy Node.js App to EKS -----------
+      - name: Deploy app to EKS
+        run: |
+          kubectl --kubeconfig=$KUBECONFIG apply -f k8s/
