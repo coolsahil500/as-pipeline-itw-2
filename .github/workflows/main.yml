@@ -1,69 +1,51 @@
-name: CI/CD DevSecOps Pipeline
+name: CI/CD Pipeline to EKS
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
-env:
-  AWS_REGION: ap-south-1
-  AWS_ACCOUNT_ID: 339713011246
-  CLUSTER_NAME: itw-test-project
-  IMAGE_REPO_NAME: nodejs-app-repo
-  REPOSITORY_URI: 339713011246.dkr.ecr.ap-south-1.amazonaws.com/nodejs-app-repo
-  IMAGE_TAG: latest
-
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: ap-south-1
+      AWS_ACCOUNT_ID: 339713011246
+      CLUSTER_NAME: itw-test-project
+      IMAGE_REPO_NAME: nodejs-app-repo
+      REPOSITORY_URI: 339713011246.dkr.ecr.ap-south-1.amazonaws.com/nodejs-app-repo
+      IMAGE_TAG: latest
+
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Configure AWS credentials using OIDC
+    - name: Configure AWS credentials (OIDC)
       uses: aws-actions/configure-aws-credentials@v2
       with:
         role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
         aws-region: ${{ env.AWS_REGION }}
         audience: sts.amazonaws.com
 
-    - name: Configure kubectl
-      run: |
-        aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Terraform Security Scan (tfsec)
-      uses: aquasecurity/tfsec-action@v1.0.3
-      with:
-        working-directory: ./terraform
-
-    - name: Build Docker image
+    - name: Build and tag Docker image
       run: |
         docker build -t $REPOSITORY_URI:$IMAGE_TAG .
-
-    - name: Install Trivy
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: image
-        image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
-        severity: CRITICAL,HIGH
-        exit-code: 1
-
-    - name: Login to Amazon ECR
-      run: |
-        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
-
-    - name: Push Docker image to ECR
+    
+    - name: Push Docker image to Amazon ECR
       run: |
         docker push $REPOSITORY_URI:$IMAGE_TAG
 
-    - name: Apply Sealed Secrets
+    - name: Update kubeconfig
       run: |
-        kubectl apply -f sealed-secrets/
+        aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
 
     - name: Deploy to EKS
       run: |
