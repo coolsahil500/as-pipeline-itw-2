@@ -1,9 +1,13 @@
-name: DevSecOps CI/CD Pipeline
+name: CI/CD DevSecOps Pipeline
 
 on:
   push:
     branches:
       - main
+
+permissions:
+  id-token: write
+  contents: read
 
 env:
   AWS_REGION: ap-south-1
@@ -14,60 +18,53 @@ env:
   IMAGE_TAG: latest
 
 jobs:
-  devsecops:
+  deploy:
     runs-on: ubuntu-latest
 
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Configure AWS credentials using OIDC
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
-          aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
+    - name: Configure AWS credentials using OIDC
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::339713011246:role/github-oidc-deployer-role-v2
+        aws-region: ${{ env.AWS_REGION }}
+        audience: sts.amazonaws.com
 
-      - name: Configure kubectl
-        run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+    - name: Configure kubectl
+      run: |
+        aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
 
-      - name: Run tfsec on Terraform code
-        uses: aquasecurity/tfsec-action@v1.0.0
-        with:
-          working_directory: ./terraform
+    - name: Terraform Security Scan (tfsec)
+      uses: aquasecurity/tfsec-action@v1.0.3
+      with:
+        working-directory: ./terraform
 
-      - name: Build Docker image
-        run: |
-          docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+    - name: Build Docker image
+      run: |
+        docker build -t $REPOSITORY_URI:$IMAGE_TAG .
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
-          format: table
-          exit-code: 0
+    - name: Install Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: image
+        image-ref: ${{ env.REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+        severity: CRITICAL,HIGH
+        exit-code: 1
 
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-            docker login --username AWS --password-stdin $REPOSITORY_URI
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
 
-      - name: Push Docker image to ECR
-        run: |
-          docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
-          docker push $REPOSITORY_URI:$IMAGE_TAG
+    - name: Push Docker image to ECR
+      run: |
+        docker push $REPOSITORY_URI:$IMAGE_TAG
 
-      - name: Apply SealedSecrets
-        run: |
-          kubeseal --controller-namespace kube-system < sealed-secrets/sealedsecret.yaml \
-            --format yaml > k8s/sealed-secret.enc.yaml
-          kubectl apply -f k8s/sealed-secret.enc.yaml
+    - name: Apply Sealed Secrets
+      run: |
+        kubectl apply -f sealed-secrets/
 
-      - name: Deploy to EKS
-        run: |
-          kubectl apply -f k8s/
+    - name: Deploy to EKS
+      run: |
+        kubectl apply -f k8s/
