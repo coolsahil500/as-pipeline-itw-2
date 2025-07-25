@@ -63,18 +63,6 @@ jobs:
       run: |
         kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
 
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply --validate=false -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
-    - name: Install Sealed Secrets Controller
-      run: |
-        kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/controller.yaml
-
     - name: Install kubeseal CLI
       run: |
         wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.25.0/kubeseal-0.25.0-linux-amd64.tar.gz
