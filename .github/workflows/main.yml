@@ -64,7 +64,7 @@ jobs:
       - name: Apply Sealed Secrets
         run: |
           kubectl --kubeconfig=$KUBECONFIG apply -f sealed-secrets/
-        if: ${{ exists('sealed-secrets/') }}
+        
 
       # ----------- Deploy Node.js App to EKS -----------
       - name: Deploy app to EKS
